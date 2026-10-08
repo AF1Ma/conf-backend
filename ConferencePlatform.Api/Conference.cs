@@ -8,6 +8,7 @@ public class Conference
     public DateTime StartDate { get; set; }
     public DateTime EndDate { get; set; }
     public string Location { get; set; } = string.Empty;
+    public string OrganizerId { get; set; } = string.Empty ;
 }
 
 
