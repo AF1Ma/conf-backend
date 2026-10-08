@@ -18,6 +18,10 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
+var jwtSecret = builder.Configuration["SecuritySettings:JwtSecret"];
+app.Logger.LogInformation("Security configuration loaded. Secret key is present: {IsPresent}", !string.IsNullOrEmpty(jwtSecret));
+
+
 app.UseCors("AllowAll");
 
 // Configure the HTTP request pipeline.
