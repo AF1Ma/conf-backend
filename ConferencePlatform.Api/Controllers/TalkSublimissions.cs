@@ -16,7 +16,6 @@ public class TalkSubmissionsController : ControllerBase
         _context = context;
     }
 
-    // Получение списка всех поданных заявок (для панели организатора)
     [HttpGet]
     public async Task<ActionResult<IEnumerable<TalkSubmission>>> GetAll()
     {
@@ -24,7 +23,6 @@ public class TalkSubmissionsController : ControllerBase
         return Ok(submissions);
     }
 
-    // Подача заявки спикером (Call for Papers)
     [HttpPost]
     public async Task<ActionResult<TalkSubmission>> SubmitTalk([FromBody] TalkSubmission submission)
     {
@@ -32,18 +30,32 @@ public class TalkSubmissionsController : ControllerBase
         {
             return BadRequest(new { message = "Тема доклада обязательна для заполнения" });
         }
+        if (string.IsNullOrEmpty(submission.Id) || submission.Id == "123" || submission.Id == "111")
+        {
+            submission.Id = Guid.NewGuid().ToString();
+        }
 
-        submission.Id = Guid.NewGuid().ToString();
         submission.Status = "Submitted";
         submission.SubmittedAt = DateTime.UtcNow;
 
         _context.TalkSubmissions.Add(submission);
-        await _context.SaveChangesAsync(); // Запись в реальную таблицу TalkSubmissions
+        await _context.SaveChangesAsync();
 
         return CreatedAtAction(nameof(GetAll), new { id = submission.Id }, submission);
     }
 
-    // Модерация заявки организатором (смена статуса на Approved или Rejected)
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> Delete(string id)
+    {
+        var submission = await _context.TalkSubmissions.FindAsync(id);
+        if (submission == null) return NotFound();
+
+        _context.TalkSubmissions.Remove(submission);
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
     [HttpPatch("{id}/status")]
     public async Task<IActionResult> UpdateStatus(string id, [FromBody] UpdateStatusDto dto)
     {

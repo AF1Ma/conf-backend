@@ -32,6 +32,7 @@ public class Speaker
     public string Company { get; set; } = string.Empty;
     public string JobTitle { get; set; } = string.Empty;
     public string Bio { get; set; } = string.Empty;
+    public bool IsDiplomaVerified { get; set; } = false;
 }
 
 public class TalkSubmission

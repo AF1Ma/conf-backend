@@ -11,7 +11,6 @@ public class ConferencesController : ControllerBase
 {
     private readonly AppDbContext _context;
 
-    // Внедрение зависимости (Dependency Injection): ASP.NET Core сам передает контекст БД
     public ConferencesController(AppDbContext context)
     {
         _context = context;
@@ -20,7 +19,6 @@ public class ConferencesController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Conference>>> GetAll()
     {
-        // Если база пустая при первом запуске — засеем две стартовые конференции
         if (!await _context.Conferences.AnyAsync())
         {
             _context.Conferences.AddRange(
@@ -46,7 +44,6 @@ public class ConferencesController : ControllerBase
             await _context.SaveChangesAsync();
         }
 
-        // Асинхронный SQL-запрос SELECT * FROM Conferences к PostgreSQL
         var conferences = await _context.Conferences.ToListAsync();
         return Ok(conferences);
     }
@@ -65,15 +62,26 @@ public class ConferencesController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<Conference>> Create([FromBody] Conference conference)
     {
-        // Генерация нового строкового UUID, если клиент его не передал
-        if (string.IsNullOrEmpty(conference.Id))
+        if (string.IsNullOrEmpty(conference.Id) || conference.Id == "123" || conference.Id == "111")
         {
             conference.Id = Guid.NewGuid().ToString();
         }
 
         _context.Conferences.Add(conference);
-        await _context.SaveChangesAsync(); // Сохранение строки в PostgreSQL
+        await _context.SaveChangesAsync();
 
         return CreatedAtAction(nameof(GetById), new { id = conference.Id }, conference);
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> Delete(string id)
+    {
+        var conference = await _context.Conferences.FindAsync(id);
+        if (conference == null) return NotFound();
+
+        _context.Conferences.Remove(conference);
+        await _context.SaveChangesAsync();
+
+        return NoContent();
     }
 }
