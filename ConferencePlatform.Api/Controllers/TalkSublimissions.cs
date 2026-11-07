@@ -17,9 +17,16 @@ public class TalkSubmissionsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<TalkSubmission>>> GetAll()
+    public async Task<ActionResult<IEnumerable<TalkSubmission>>> GetAll([FromQuery] string? status)
     {
-        var submissions = await _context.TalkSubmissions.ToListAsync();
+        var query = _context.TalkSubmissions.AsQueryable();
+
+        if (!string.IsNullOrEmpty(status))
+        {
+            query = query.Where(s => s.Status == status);
+        }
+
+        var submissions = await query.ToListAsync();
         return Ok(submissions);
     }
 

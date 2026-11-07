@@ -17,7 +17,7 @@ public class ConferencesController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Conference>>> GetAll()
+    public async Task<ActionResult<IEnumerable<Conference>>> GetAll([FromQuery] string? organizerId)
     {
         if (!await _context.Conferences.AnyAsync())
         {
@@ -29,7 +29,8 @@ public class ConferencesController : ControllerBase
                     Description = "Ежегодная научная конференция по современным IT-технологиям и архитектуре систем.",
                     StartDate = new DateTime(2026, 10, 15, 10, 0, 0, DateTimeKind.Utc),
                     EndDate = new DateTime(2026, 10, 17, 18, 0, 0, DateTimeKind.Utc),
-                    Location = "Главный корпус / Онлайн"
+                    Location = "Главный корпус / Онлайн",
+                    OrganizerId = "admin-1"
                 },
                 new Conference
                 {
@@ -38,13 +39,21 @@ public class ConferencesController : ControllerBase
                     Description = "Митап практиков по контейнеризации, CI/CD и наблюдаемости распределенных систем.",
                     StartDate = new DateTime(2026, 10, 22, 11, 0, 0, DateTimeKind.Utc),
                     EndDate = new DateTime(2026, 10, 23, 17, 0, 0, DateTimeKind.Utc),
-                    Location = "Аудитория 204"
+                    Location = "Аудитория 204",
+                    OrganizerId = "admin-1"
                 }
             );
             await _context.SaveChangesAsync();
         }
 
-        var conferences = await _context.Conferences.ToListAsync();
+        var query = _context.Conferences.AsQueryable();
+
+        if (!string.IsNullOrEmpty(organizerId))
+        {
+            query = query.Where(c => c.OrganizerId == organizerId);
+        }
+
+        var conferences = await query.ToListAsync();
         return Ok(conferences);
     }
 
@@ -65,6 +74,11 @@ public class ConferencesController : ControllerBase
         if (string.IsNullOrEmpty(conference.Id) || conference.Id == "123" || conference.Id == "111")
         {
             conference.Id = Guid.NewGuid().ToString();
+        }
+
+        if (string.IsNullOrEmpty(conference.OrganizerId))
+        {
+            conference.OrganizerId = "admin-1";
         }
 
         _context.Conferences.Add(conference);
