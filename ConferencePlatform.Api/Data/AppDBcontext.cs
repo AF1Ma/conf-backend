@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using ConferencePlatform.Api.Models;
 
 namespace ConferencePlatform.Api.Data;
@@ -7,6 +7,11 @@ public class AppDbContext : DbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
     {
+    }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<User>().HasIndex(user => user.Email).IsUnique();
     }
 
     public DbSet<Conference> Conferences => Set<Conference>();
