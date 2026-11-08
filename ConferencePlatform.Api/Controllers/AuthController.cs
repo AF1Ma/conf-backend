@@ -1,82 +1,113 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using System.ComponentModel.DataAnnotations;
+using System.IdentityModel.Tokens.Jwt;
+using ConferencePlatform.Api.Auth;
 using ConferencePlatform.Api.Data;
 using ConferencePlatform.Api.Models;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace ConferencePlatform.Api.Controllers;
 
 [ApiController]
 [Route("api/auth")]
-public class AuthController : ControllerBase
+public sealed class AuthController(AppDbContext db, IPasswordHasher<User> hasher, AuthTokens tokens) : ControllerBase
 {
-    private readonly AppDbContext _context;
-
-    public AuthController(AppDbContext context)
-    {
-        _context = context;
-    }
-
     [HttpPost("register")]
-    public async Task<ActionResult> Register([FromBody] RegisterDto dto)
+    [EnableRateLimiting("auth")]
+    public async Task<IActionResult> Register(RegisterRequest request, CancellationToken cancellationToken)
     {
-        if (await _context.Users.AnyAsync(u => u.Email == dto.Email))
-        {
-            return BadRequest(new { message = "Пользователь с таким email уже существует" });
-        }
+        if (request.Role is not ("Listener" or OrganizerAccount.Role))
+            return BadRequest(new { message = "Выбери роль участника или организатора." });
 
+        var email = request.Email.Trim().ToLowerInvariant();
+        if (await db.Users.AnyAsync(user => user.Email == email, cancellationToken))
+            return Conflict(new { message = "Пользователь с таким email уже зарегистрирован." });
+
+        var fullName = request.FullName?.Trim();
         var user = new User
         {
-            Id = Guid.NewGuid().ToString(),
-            Email = dto.Email,
-            FullName = dto.FullName,
-            Role = string.IsNullOrEmpty(dto.Role) ? "Listener" : dto.Role,
-            PasswordHash = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(dto.Password)),
-            CreatedAt = DateTime.UtcNow
+            Email = email,
+            FullName = string.IsNullOrWhiteSpace(fullName) ? email.Split('@')[0] : fullName,
+            Role = request.Role
         };
+        user.PasswordHash = hasher.HashPassword(user, request.Password);
+        db.Users.Add(user);
 
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync();
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            return Conflict(new { message = "Пользователь с таким email уже зарегистрирован." });
+        }
 
-        return StatusCode(201, new { message = "Регистрация успешна", userId = user.Id, role = user.Role });
+        return CreatedAtAction(nameof(Me), null, Session(user));
     }
 
     [HttpPost("login")]
-    public async Task<ActionResult> Login([FromBody] LoginDto dto)
+    [EnableRateLimiting("auth")]
+    public async Task<IActionResult> Login(LoginRequest request, CancellationToken cancellationToken)
     {
-        var targetHash = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(dto.Password));
+        var email = request.Email.Trim().ToLowerInvariant();
+        var user = await db.Users.SingleOrDefaultAsync(account => account.Email == email, cancellationToken);
+        if (user is null || hasher.VerifyHashedPassword(user, user.PasswordHash, request.Password) == PasswordVerificationResult.Failed)
+            return Unauthorized(new { message = "Неверный email или пароль." });
 
-        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == dto.Email && u.PasswordHash == targetHash);
-        if (user == null)
+        return Ok(Session(user));
+    }
+
+    [Authorize]
+    [HttpGet("me")]
+    public async Task<IActionResult> Me(CancellationToken cancellationToken)
+    {
+        var id = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(account => account.Id == id, cancellationToken);
+        if (user is null) return Unauthorized();
+        return Ok(Profile(user));
+    }
+
+    [Authorize]
+    [HttpPost("become-organizer/{userId}")]
+    public async Task<IActionResult> BecomeOrganizer(string userId, CancellationToken cancellationToken)
+    {
+        if (User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value != userId)
+            return Forbid();
+
+        var user = await db.Users.SingleOrDefaultAsync(account => account.Id == userId, cancellationToken);
+        if (user is null) return NotFound(new { message = "Пользователь не найден." });
+
+        if (user.Role != OrganizerAccount.Role)
         {
-            return Unauthorized(new { message = "Неверный email или пароль" });
+            user.Role = OrganizerAccount.Role;
+            await db.SaveChangesAsync(cancellationToken);
         }
 
-        return Ok(new { message = "Успешный вход", userId = user.Id, fullName = user.FullName, role = user.Role });
+        return Ok(Session(user));
     }
 
-    [HttpPost("become-organizer/{userId}")]
-    public async Task<ActionResult> BecomeOrganizer(string userId)
+    private static object Profile(User user) => new { userId = user.Id, user.Email, user.FullName, user.Role };
+
+    private object Session(User user) => new
     {
-        var user = await _context.Users.FindAsync(userId);
-        if (user == null) return NotFound(new { message = "Пользователь не найден" });
-
-        user.Role = "Organizer";
-        await _context.SaveChangesAsync();
-
-        return Ok(new { message = "Роль успешно изменена на Организатор", role = user.Role });
-    }
+        userId = user.Id,
+        user.Email,
+        user.FullName,
+        user.Role,
+        access_token = tokens.Issue(user)
+    };
 }
 
-public class RegisterDto
-{
-    public string Email { get; set; } = string.Empty;
-    public string Password { get; set; } = string.Empty;
-    public string FullName { get; set; } = string.Empty;
-    public string Role { get; set; } = "Listener";
-}
+public sealed record LoginRequest(
+    [Required, EmailAddress, StringLength(254)] string Email,
+    [Required, StringLength(128)] string Password);
 
-public class LoginDto
-{
-    public string Email { get; set; } = string.Empty;
-    public string Password { get; set; } = string.Empty;
-}
+public sealed record RegisterRequest(
+    [Required, EmailAddress, StringLength(254)] string Email,
+    [Required, StringLength(128, MinimumLength = 8)] string Password,
+    [StringLength(120)] string? FullName,
+    string Role = "Listener");

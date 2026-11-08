@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using ConferencePlatform.Api.Auth;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ConferencePlatform.Api.Data;
 using ConferencePlatform.Api.Models;
@@ -17,6 +19,7 @@ public class TalkSubmissionsController : ControllerBase
     }
 
     [HttpGet]
+    [Authorize(Roles = OrganizerAccount.Role)]
     public async Task<ActionResult<IEnumerable<TalkSubmission>>> GetAll([FromQuery] string? status)
     {
         var query = _context.TalkSubmissions.AsQueryable();
@@ -37,6 +40,11 @@ public class TalkSubmissionsController : ControllerBase
         {
             return BadRequest(new { message = "Тема доклада обязательна для заполнения" });
         }
+        if (string.IsNullOrWhiteSpace(submission.SpeakerId))
+            return BadRequest(new { message = "Укажи ID спикера." });
+        if (!await _context.Tracks.AnyAsync(track => track.Id == submission.TrackId))
+            return BadRequest(new { message = "Выбери существующую секцию конференции." });
+
         if (string.IsNullOrEmpty(submission.Id) || submission.Id == "123" || submission.Id == "111")
         {
             submission.Id = Guid.NewGuid().ToString();
@@ -52,6 +60,7 @@ public class TalkSubmissionsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Roles = OrganizerAccount.Role)]
     public async Task<IActionResult> Delete(string id)
     {
         var submission = await _context.TalkSubmissions.FindAsync(id);
@@ -64,17 +73,20 @@ public class TalkSubmissionsController : ControllerBase
     }
 
     [HttpPatch("{id}/status")]
+    [Authorize(Roles = OrganizerAccount.Role)]
     public async Task<IActionResult> UpdateStatus(string id, [FromBody] UpdateStatusDto dto)
     {
-        var submission = await _context.TalkSubmissions.FirstOrDefaultAsync(s => s.Id == id);
-        if (submission == null)
-        {
-            return NotFound(new { message = "Заявка не найдена" });
-        }
+        if (dto.Status is not ("Approved" or "Rejected"))
+            return BadRequest(new { message = "Допустимые решения: Approved или Rejected." });
 
-        submission.Status = dto.Status;
-        await _context.SaveChangesAsync();
+        var updated = await _context.TalkSubmissions
+            .Where(submission => submission.Id == id && submission.Status == "Submitted")
+            .ExecuteUpdateAsync(setters => setters.SetProperty(submission => submission.Status, dto.Status));
 
+        var submission = await _context.TalkSubmissions.AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == id);
+        if (submission is null) return NotFound(new { message = "Заявка не найдена." });
+        if (updated == 0) return Conflict(new { message = "Заявка уже рассмотрена. Обновите список." });
         return Ok(new { message = $"Статус заявки обновлен на '{dto.Status}'", submission });
     }
 }

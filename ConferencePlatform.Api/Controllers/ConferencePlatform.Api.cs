@@ -1,4 +1,7 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using System.IdentityModel.Tokens.Jwt;
+using ConferencePlatform.Api.Auth;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ConferencePlatform.Api.Data;
 using ConferencePlatform.Api.Models;
@@ -19,33 +22,6 @@ public class ConferencesController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Conference>>> GetAll([FromQuery] string? organizerId)
     {
-        if (!await _context.Conferences.AnyAsync())
-        {
-            _context.Conferences.AddRange(
-                new Conference
-                {
-                    Id = "d3b07384-d113-4c57-bc9b-a39f64724216",
-                    Title = "Science & IT Conf 2026",
-                    Description = "Ежегодная научная конференция по современным IT-технологиям и архитектуре систем.",
-                    StartDate = new DateTime(2026, 10, 15, 10, 0, 0, DateTimeKind.Utc),
-                    EndDate = new DateTime(2026, 10, 17, 18, 0, 0, DateTimeKind.Utc),
-                    Location = "Главный корпус / Онлайн",
-                    OrganizerId = "admin-1"
-                },
-                new Conference
-                {
-                    Id = "e7c10592-8a44-42b1-9b63-c78216147289",
-                    Title = "DevOps & Cloud Days",
-                    Description = "Митап практиков по контейнеризации, CI/CD и наблюдаемости распределенных систем.",
-                    StartDate = new DateTime(2026, 10, 22, 11, 0, 0, DateTimeKind.Utc),
-                    EndDate = new DateTime(2026, 10, 23, 17, 0, 0, DateTimeKind.Utc),
-                    Location = "Аудитория 204",
-                    OrganizerId = "admin-1"
-                }
-            );
-            await _context.SaveChangesAsync();
-        }
-
         var query = _context.Conferences.AsQueryable();
 
         if (!string.IsNullOrEmpty(organizerId))
@@ -69,18 +45,25 @@ public class ConferencesController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = OrganizerAccount.Role)]
     public async Task<ActionResult<Conference>> Create([FromBody] Conference conference)
     {
-        if (string.IsNullOrEmpty(conference.Id) || conference.Id == "123" || conference.Id == "111")
-        {
-            conference.Id = Guid.NewGuid().ToString();
-        }
+        var userId = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+        if (userId is null || userId != conference.OrganizerId) return Forbid();
 
-        if (string.IsNullOrEmpty(conference.OrganizerId))
-        {
-            conference.OrganizerId = "admin-1";
-        }
+        conference.Title = conference.Title.Trim();
+        conference.Description = conference.Description.Trim();
+        conference.Location = conference.Location.Trim();
+        if (conference.Title.Length is < 1 or > 160 || conference.Location.Length is < 1 or > 180
+            || conference.Description.Length > 6000)
+            return BadRequest(new { message = "Укажи название и место проведения; описание — до 6000 символов." });
 
+        if (conference.StartDate == default || conference.EndDate <= conference.StartDate)
+            return BadRequest(new { message = "Укажи время окончания позже начала конференции." });
+
+        conference.Id = Guid.NewGuid().ToString();
+        conference.StartDate = conference.StartDate.ToUniversalTime();
+        conference.EndDate = conference.EndDate.ToUniversalTime();
         _context.Conferences.Add(conference);
         await _context.SaveChangesAsync();
 
@@ -88,10 +71,12 @@ public class ConferencesController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Roles = OrganizerAccount.Role)]
     public async Task<IActionResult> Delete(string id)
     {
         var conference = await _context.Conferences.FindAsync(id);
         if (conference == null) return NotFound();
+        if (conference.OrganizerId != User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value) return Forbid();
 
         _context.Conferences.Remove(conference);
         await _context.SaveChangesAsync();

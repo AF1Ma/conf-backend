@@ -1,4 +1,7 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using System.IdentityModel.Tokens.Jwt;
+using ConferencePlatform.Api.Auth;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ConferencePlatform.Api.Data;
 using ConferencePlatform.Api.Models;
@@ -28,13 +31,18 @@ public class TracksController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = OrganizerAccount.Role)]
     public async Task<ActionResult<Track>> Create([FromBody] Track track)
     {
-        if (string.IsNullOrEmpty(track.Id))
-        {
-            track.Id = Guid.NewGuid().ToString();
-        }
+        var conference = await _context.Conferences.AsNoTracking().FirstOrDefaultAsync(c => c.Id == track.ConferenceId);
+        if (conference is null) return NotFound(new { message = "Конференция не найдена." });
+        if (conference.OrganizerId != User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value) return Forbid();
 
+        track.Name = track.Name.Trim();
+        if (track.Name.Length is < 1 or > 120)
+            return BadRequest(new { message = "Введи название секции длиной до 120 символов." });
+
+        track.Id = Guid.NewGuid().ToString();
         _context.Tracks.Add(track);
         await _context.SaveChangesAsync();
 
@@ -42,10 +50,14 @@ public class TracksController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Roles = OrganizerAccount.Role)]
     public async Task<IActionResult> Delete(string id)
     {
         var track = await _context.Tracks.FindAsync(id);
         if (track == null) return NotFound(new { message = "Трек не найден" });
+
+        var userId = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+        if (!await _context.Conferences.AnyAsync(c => c.Id == track.ConferenceId && c.OrganizerId == userId)) return Forbid();
 
         _context.Tracks.Remove(track);
         await _context.SaveChangesAsync();
